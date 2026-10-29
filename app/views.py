@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta, timezone
-import os
 import secrets
 from decimal import Decimal
 
 import jwt
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import status, viewsets
@@ -44,7 +44,7 @@ from app.serializers import (
 )
 
 # JWT Secret & Lifetime
-SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-websale-secret-key-2026-production-ready")
+SECRET_KEY = settings.SECRET_KEY
 TOKEN_LIFETIME = timedelta(days=7)
 
 

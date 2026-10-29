@@ -55,25 +55,36 @@ The database entities are modeled to handle the full e-commerce lifecycle:
 
 ## Database Configuration (MySQL)
 
-- **Database Name:** `websale`
-- **Username:** `root`
-- **Password:** `2001`
-- **Host:** `localhost`
-- **Port:** `3306`
-
-Configured in [.env](/.env):
+Set these values in the backend environment. Keep real credentials out of source control:
 ```env
-DB_NAME=websale
-DB_USER=root
-DB_PASSWORD=2001
+DB_NAME=your_database_name
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
 DB_HOST=localhost
 DB_PORT=3306
-DATABASE_URL=mysql+pymysql://root:2001@localhost:3306/websale
-SECRET_KEY=django-insecure-websale-secret-key-2026-production-ready
-DEBUG=True
+SECRET_KEY=replace-with-a-long-random-secret
+DEBUG=False
+SECURE_SSL_REDIRECT=True
+ALLOWED_HOSTS=api.example.com
+CORS_ALLOWED_ORIGINS=https://www.example.com
 ```
 
 ---
+
+## Switching between localhost and production
+
+Do not comment and uncomment settings in Python source. Keep one local-only `websalebackend/.env` file for your computer, and configure production values in Spaceship's Python application environment. Django loads `.env` for local development only when `DEBUG` is not already set in the process environment. The hosting panel must explicitly set `DEBUG=False`; then Django will not load `.env`, even if that file was accidentally uploaded.
+
+On Windows PowerShell, create your local file from the template:
+```powershell
+Set-Location .\websalebackend
+Copy-Item .env.example .env
+```
+Edit `.env` with the MySQL database credentials for your local computer, keeping `DEBUG=True`, `ALLOWED_HOSTS=localhost,127.0.0.1`, and localhost CORS origins. Do not copy production credentials into this file.
+
+For Spaceship, do not upload `.env`. Also omit `.env.example` from the deployment package; it contains placeholders only, but is just a local setup template. Set the production values in the Python application's environment settings instead: `DEBUG=False`, your private production `SECRET_KEY`, the Spaceship database details, `ALLOWED_HOSTS` for the backend domain, and `CORS_ALLOWED_ORIGINS` for the frontend domain. These settings are read from environment variables by `config/settings.py`, so the same source code works in both environments without edits. If you also use a local `.env` on the server, remove it; the production panel variables must be present.
+
+For the frontend, local development uses the `/api` development proxy to Django on `http://127.0.0.1:8000`. For production, set `REACT_APP_API_URL` to the backend's HTTPS URL before running `npm run build`; this value is baked into the frontend build.
 
 ## Setup & Installation
 
@@ -306,3 +317,17 @@ Open `http://localhost:3000`. Customers can register, browse and search products
 Create a staff account with `python manage.py createsuperuser`, then sign in through the React `/login` page. Staff users can access `/admin` to manage products, orders, stock, and categories. Customer registration never grants staff access. API order/payment/delivery data is restricted to the owner or staff, and catalog writes and order/delivery/payment management are staff-only.
 
 Checkout currently supports **cash on delivery only**. No card details are collected and no online payment is charged. The payment-status API is for staff to record an already-collected payment; it is not a payment gateway.
+
+## Deploying on Spaceship Web Hosting Pro
+
+This project uses Django's WSGI entry point at `config.wsgi:application` and a MySQL-compatible database. Before deployment, confirm that the hosting account's Python app supports the Python version and packages in `requirements.txt`, and ask Spaceship for its required WSGI/Passenger setup and static-file instructions.
+
+1. In cPanel, create a database and a dedicated database user, attach the user to the database, and grant the required privileges. Record the exact database name, user, password, host, and port cPanel provides. Shared-hosting account prefixes may be part of the database name and user.
+2. In the Python application environment settings, configure `SECRET_KEY`, `DEBUG=False`, `SECURE_SSL_REDIRECT=True`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, and `DB_PORT`. `DB_USER` is the **MySQL database user**, not automatically your Spaceship/cPanel login name. Use the actual database user created in cPanel. Do not commit credentials or upload a real `.env` file to a public directory.
+3. Upload the backend package so `manage.py`, `config/`, and `app/` are in the configured application root. Install dependencies from `requirements.txt` using the command/environment method Spaceship documents. Set the app's WSGI entry point to `config.wsgi:application` (or its documented equivalent).
+4. Run `python manage.py migrate` once against the hosted database. Create a staff user with `python manage.py createsuperuser`.
+5. Run `python manage.py collectstatic` and follow Spaceship's instructions for mapping `staticfiles/` to `/static/`. Do not assume Django's development server will serve production static files.
+6. Build the React app with `REACT_APP_API_URL=https://api.example.com` set in the build environment, then run `npm run build`. Upload the contents of `websalefrontend/build/` to the domain's document root. Configure the web server to route client-side paths such as `/cart` and `/account` to `index.html`.
+7. Replace the example domains above with your actual frontend/backend domains. Set `ALLOWED_HOSTS` to the backend host (no scheme); set `CORS_ALLOWED_ORIGINS` to the frontend origin (include `https://`, no trailing path). Test registration, login, product listing, cart, checkout, admin, and static assets over HTTPS before opening the store.
+
+Product image uploads are currently stored as Base64 text in the database. This avoids needing a separate media server, but increases database size; keep database backups and monitor storage.
