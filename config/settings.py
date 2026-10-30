@@ -78,8 +78,8 @@ ASGI_APPLICATION = "config.asgi.application"
 
 # Database Configuration - MySQL with websale database
 DB_NAME = os.getenv("DB_NAME", "websale" if DEBUG else "")
-DB_USER = os.getenv("DB_USER", "root" if DEBUG else "")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "Websale123")
+DB_USER = os.getenv("DB_USER", "praduemna" if DEBUG else "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "Praduemna@123")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 if not DEBUG and not all((DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT)):
