@@ -79,6 +79,13 @@ class Product(models.Model):
     def is_in_stock(self) -> bool:
         return self.stock > 0
 
+    @property
+    def discount_percentage(self) -> int:
+        if self.original_price and self.price and self.original_price > self.price:
+            discount = ((self.original_price - self.price) / self.original_price) * 100
+            return round(discount)
+        return 0
+
     def __str__(self):
         return f"{self.name} (${self.price})"
 

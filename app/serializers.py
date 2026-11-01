@@ -45,6 +45,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     is_in_stock = serializers.BooleanField(read_only=True)
+    discount_percentage = serializers.IntegerField(read_only=True)
     image_url = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def validate_image_url(self, value):
@@ -99,6 +100,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "description",
             "price",
             "original_price",
+            "discount_percentage",
             "stock",
             "image_url",
             "is_active",
@@ -362,6 +364,8 @@ class DeliverySerializer(serializers.ModelSerializer):
 # 6. ORDER & ORDER ITEM SERIALIZERS (Taking Orders)
 # ---------------------------------------------------------------------------
 class OrderItemSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = OrderItem
         fields = [
@@ -371,7 +375,13 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "price",
             "quantity",
             "subtotal",
+            "image_url",
         ]
+
+    def get_image_url(self, obj):
+        if obj.product and obj.product.image_url:
+            return obj.product.image_url
+        return ""
 
 
 class OrderSerializer(serializers.ModelSerializer):

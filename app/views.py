@@ -871,9 +871,9 @@ def list_orders(request):
     if not user:
         return Response({"detail": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
     if not user.is_staff:
-        orders = Order.objects.filter(user=user).select_related("payment", "delivery").prefetch_related("items")
+        orders = Order.objects.filter(user=user).select_related("payment", "delivery").prefetch_related("items__product")
     else:
-        orders = Order.objects.all().select_related("payment", "delivery").prefetch_related("items")
+        orders = Order.objects.all().select_related("payment", "delivery").prefetch_related("items__product")
 
     serializer = OrderSerializer(orders, many=True)
     return Response(serializer.data)
@@ -885,10 +885,11 @@ def order_detail(request, order_identifier):
     """
     Get order details by order ID or order number (e.g. 'WS-20261028-XXXX').
     """
+    base_qs = Order.objects.select_related("payment", "delivery").prefetch_related("items__product")
     if order_identifier.isdigit():
-        order = Order.objects.filter(id=int(order_identifier)).first()
+        order = base_qs.filter(id=int(order_identifier)).first()
     else:
-        order = Order.objects.filter(order_number=order_identifier).first()
+        order = base_qs.filter(order_number=order_identifier).first()
 
     if not order:
         return Response({"detail": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
