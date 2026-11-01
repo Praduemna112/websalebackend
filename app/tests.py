@@ -1,6 +1,9 @@
 from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
+
+from django.core import mail
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -123,6 +126,7 @@ class WebSaleAPITestCase(TestCase):
         self.assertEqual(reg_res.status_code, status.HTTP_201_CREATED)
         self.assertIn("token", reg_res.data)
         self.assertFalse(reg_res.data["user"]["is_staff"])
+        self.assertFalse(reg_res.data["user"]["is_superuser"])
 
         # Login
         login_res = self.client.post(
@@ -138,6 +142,107 @@ class WebSaleAPITestCase(TestCase):
         profile_res = self.client.get("/api/auth/profile/")
         self.assertEqual(profile_res.status_code, status.HTTP_200_OK)
         self.assertEqual(profile_res.data["username"], "johndoe")
+
+    def test_superuser_can_manage_users_but_staff_cannot(self):
+        customer = User.objects.create_user(username="managed-customer", password="Password123!")
+        staff = User.objects.create_user(
+            username="regular-staff", password="Password123!", is_staff=True
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {create_jwt_token(customer)}")
+        self.assertEqual(self.client.get("/api/auth/users/").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/auth/users/{customer.id}/",
+                {"is_staff": True},
+                format="json",
+            ).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {create_jwt_token(staff)}")
+        self.assertEqual(self.client.get("/api/auth/users/").status_code, status.HTTP_403_FORBIDDEN)
+
+        superuser = User.objects.create_superuser(
+            username="user-admin", email="admin@example.com", password="Password123!"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {create_jwt_token(superuser)}")
+        response = self.client.get("/api/auth/users/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), User.objects.count())
+        self.assertNotIn("password", response.data[0])
+
+        response = self.client.patch(
+            f"/api/auth/users/{customer.id}/",
+            {"is_staff": True, "is_superuser": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        customer.refresh_from_db()
+        self.assertTrue(customer.is_staff)
+        self.assertTrue(customer.is_superuser)
+
+        response = self.client.patch(
+            f"/api/auth/users/{superuser.id}/",
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        FRONTEND_URL="http://localhost:3000",
+    )
+    def test_password_reset_request_and_confirmation(self):
+        user = User.objects.create_user(
+            username="reset-customer",
+            email="reset@example.com",
+            password="OriginalPassword123!",
+        )
+
+        unknown_response = self.client.post(
+            "/api/auth/password-reset/",
+            {"email": "unknown@example.com"},
+            format="json",
+        )
+        response = self.client.post(
+            "/api/auth/password-reset/",
+            {"email": "RESET@example.com"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, unknown_response.data)
+        self.assertEqual(len(mail.outbox), 1)
+
+        reset_link = next(
+            line for line in mail.outbox[0].body.splitlines() if line.startswith("http")
+        )
+        reset_url = urlparse(reset_link)
+        reset_params = parse_qs(reset_url.query)
+        self.assertEqual(reset_url.path, "/reset-password")
+        confirm_response = self.client.post(
+            "/api/auth/password-reset/confirm/",
+            {
+                "uid": reset_params["uid"][0],
+                "token": reset_params["token"][0],
+                "new_password": "NewUniquePassword847!",
+            },
+            format="json",
+        )
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("NewUniquePassword847!"))
+
+        expired_response = self.client.post(
+            "/api/auth/password-reset/confirm/",
+            {
+                "uid": reset_params["uid"][0],
+                "token": reset_params["token"][0],
+                "new_password": "AnotherUniquePassword847!",
+            },
+            format="json",
+        )
+        self.assertEqual(expired_response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_04_add_to_cart_and_view_cart(self):
         session_id = "test-session-cart-1"
@@ -271,6 +376,75 @@ class WebSaleAPITestCase(TestCase):
         # Verify order is now marked DELIVERED
         order = Order.objects.get(order_number=order_number)
         self.assertEqual(order.status, "DELIVERED")
+
+    def test_forgot_password(self):
+        user = User.objects.create_user(
+            username="forgot-user",
+            email="forgotuser@example.com",
+            password="InitialPassword123!",
+        )
+
+        # 1. Non-existent email -> 404
+        res = self.client.post(
+            "/api/auth/forgot-password/",
+            {
+                "email": "nonexistent@example.com",
+                "new_password": "NewSecretPassword123!",
+                "confirm_password": "NewSecretPassword123!",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+
+        # 2. Mismatched passwords -> 400
+        res = self.client.post(
+            "/api/auth/forgot-password/",
+            {
+                "email": "forgotuser@example.com",
+                "new_password": "NewSecretPassword123!",
+                "confirm_password": "DifferentPassword123!",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 3. Successful reset with confirm_password -> 200
+        res = self.client.post(
+            "/api/auth/forgot-password/",
+            {
+                "email": "forgotuser@example.com",
+                "new_password": "NewSecretPassword123!",
+                "confirm_password": "NewSecretPassword123!",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("NewSecretPassword123!"))
+
+        # 4. Successful login with new password
+        login_res = self.client.post(
+            "/api/auth/login/",
+            {"username": "forgot-user", "password": "NewSecretPassword123!"},
+            format="json",
+        )
+        self.assertEqual(login_res.status_code, status.HTTP_200_OK)
+
+        # 5. Successful reset with currect_password alias -> 200
+        res = self.client.post(
+            "/api/auth/forgot-password/",
+            {
+                "email": "forgotuser@example.com",
+                "new_password": "AnotherSecret123!",
+                "currect_password": "AnotherSecret123!",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("AnotherSecret123!"))
+
+
 
     def test_staff_permissions_and_customer_order_isolation(self):
         response = self.client.get("/api/orders/")

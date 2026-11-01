@@ -164,6 +164,8 @@ Requests from `http://localhost:3000` and `http://localhost:5173` (Vite) are all
 
 - **`GET /api/auth/profile/`**: View authenticated user profile.
 - **`PUT /api/auth/profile/`**: Update user profile and shipping details.
+- **`GET /api/auth/users/`**: List all user accounts and their active/staff/superuser flags. Superuser only.
+- **`PATCH /api/auth/users/<id>/`**: Update a user's name, email, active status, or staff/superuser access. Superuser only. Passwords are never returned or editable through this endpoint; at least one active superuser must remain.
 
 ---
 

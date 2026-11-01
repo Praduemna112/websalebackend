@@ -1,9 +1,10 @@
 import base64
 import binascii
 
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.contrib.auth.models import User
 from rest_framework import serializers
 
 from app.models import (
@@ -135,8 +136,63 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "is_staff",
+            "is_superuser",
             "profile",
         ]
+
+
+class UserAdminSerializer(serializers.ModelSerializer):
+    phone = serializers.CharField(
+        source="profile.phone",
+        read_only=True,
+        allow_null=True,
+        default="",
+    )
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "phone",
+            "is_active",
+            "is_staff",
+            "is_superuser",
+            "date_joined",
+            "last_login",
+        ]
+        read_only_fields = ["id", "date_joined", "last_login"]
+
+    def validate(self, attrs):
+        is_staff = attrs.get("is_staff", getattr(self.instance, "is_staff", False))
+        is_superuser = attrs.get(
+            "is_superuser", getattr(self.instance, "is_superuser", False)
+        )
+        if is_superuser and not is_staff:
+            raise serializers.ValidationError(
+                {"is_staff": "A superuser must also have staff access."}
+            )
+        return attrs
+
+
+class AdminPasswordResetSerializer(serializers.Serializer):
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "The new passwords do not match."}
+            )
+
+        try:
+            validate_password(attrs["new_password"], self.context["user"])
+        except ValidationError as exc:
+            raise serializers.ValidationError({"new_password": exc.messages}) from exc
+        return attrs
 
 
 class UserRegisterSerializer(serializers.Serializer):
@@ -155,6 +211,59 @@ class UserRegisterSerializer(serializers.Serializer):
 class UserLoginSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True)
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        user = self.context["user"]
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "The new passwords do not match."}
+            )
+
+        try:
+            validate_password(attrs["new_password"], user)
+        except ValidationError as exc:
+            raise serializers.ValidationError({"new_password": exc.messages}) from exc
+        attrs["user"] = user
+        return attrs
+
+
+class PasswordRecoverySerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    recovery_code = serializers.CharField(max_length=128, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "The new passwords do not match."}
+            )
+        return attrs
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    new_password = serializers.CharField(write_only=True, min_length=6)
+    confirm_password = serializers.CharField(write_only=True, min_length=6, required=False)
+    currect_password = serializers.CharField(write_only=True, min_length=6, required=False)
+
+    def validate(self, attrs):
+        confirm = attrs.get("confirm_password") or attrs.get("currect_password")
+        if not confirm:
+            raise serializers.ValidationError(
+                {"confirm_password": "Confirm password is required."}
+            )
+        if attrs["new_password"] != confirm:
+            raise serializers.ValidationError(
+                {"confirm_password": "The new passwords do not match."}
+            )
+        attrs["confirm_password"] = confirm
+        return attrs
 
 
 # ---------------------------------------------------------------------------

@@ -4,14 +4,19 @@ from decimal import Decimal
 
 import jwt
 from django.contrib.auth import authenticate
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, BasePermission, SAFE_METHODS
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 
 from app.models import (
     Cart,
@@ -38,6 +43,11 @@ from app.serializers import (
     UpdateCartItemSerializer,
     UpdateDeliveryStatusSerializer,
     UpdateOrderStatusSerializer,
+    UserAdminSerializer,
+    AdminPasswordResetSerializer,
+    ForgotPasswordSerializer,
+    PasswordChangeSerializer,
+    PasswordRecoverySerializer,
     UserLoginSerializer,
     UserRegisterSerializer,
     UserSerializer,
@@ -90,6 +100,16 @@ class IsJWTAdminUser(BasePermission):
     def has_permission(self, request, view):
         user = get_authenticated_user(request)
         return bool(user and user.is_staff)
+
+
+class IsJWTSuperuser(BasePermission):
+    def has_permission(self, request, view):
+        user = get_authenticated_user(request)
+        return bool(user and user.is_superuser)
+
+
+class PasswordRecoveryRateThrottle(AnonRateThrottle):
+    rate = "5/hour"
 
 
 class ReadOnlyOrJWTAdmin(BasePermission):
@@ -178,6 +198,12 @@ def api_root(request):
                 "register": "/api/auth/register/",
                 "login": "/api/auth/login/",
                 "profile": "/api/auth/profile/",
+                "forgot_password": "/api/auth/forgot-password/",
+                "change_password": "/api/auth/change-password/",
+                "recovery_code": "/api/auth/recovery-code/",
+                "recover_password": "/api/auth/recover-password/",
+                "users": "/api/auth/users/",
+                "reset_user_password": "/api/auth/users/<id>/password/",
             },
             "products": {
                 "categories": "/api/categories/",
@@ -303,6 +329,137 @@ def login_user(request):
     })
 
 
+@api_view(["POST"])
+@permission_classes([IsJWTAuthenticated])
+def change_password(request):
+    user = get_authenticated_user(request)
+    if not user:
+        return Response({"detail": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    serializer = PasswordChangeSerializer(
+        data=request.data,
+        context={"user": user},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user.set_password(serializer.validated_data["new_password"])
+    user.save(update_fields=["password"])
+    return Response({"detail": "Your password has been changed successfully."})
+
+
+@api_view(["POST"])
+@permission_classes([IsJWTAuthenticated])
+def generate_recovery_code(request):
+    user = get_authenticated_user(request)
+    if not user:
+        return Response({"detail": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    profile, _ = CustomerProfile.objects.get_or_create(user=user)
+    recovery_code = secrets.token_urlsafe(32)
+    profile.recovery_code_hash = make_password(recovery_code)
+    profile.save(update_fields=["recovery_code_hash", "updated_at"])
+    return Response({
+        "recovery_code": recovery_code,
+        "detail": "Save this recovery code now. It will not be shown again.",
+    })
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([PasswordRecoveryRateThrottle])
+def recover_password(request):
+    serializer = PasswordRecoverySerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        user = User.objects.select_for_update().filter(
+            username__iexact=serializer.validated_data["username"]
+        ).first()
+        profile = (
+            CustomerProfile.objects.select_for_update().filter(user=user).first()
+            if user
+            else None
+        )
+        recovery_code = serializer.validated_data["recovery_code"]
+        if not profile or not profile.recovery_code_hash or not check_password(
+            recovery_code, profile.recovery_code_hash
+        ):
+            return Response(
+                {"detail": "Username or recovery code is invalid."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        password_serializer = PasswordChangeSerializer(
+            data={
+                "new_password": serializer.validated_data["new_password"],
+                "confirm_password": serializer.validated_data["confirm_password"],
+            },
+            context={"user": user},
+        )
+        if not password_serializer.is_valid():
+            return Response(
+                password_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(password_serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        profile.recovery_code_hash = ""
+        profile.save(update_fields=["recovery_code_hash", "updated_at"])
+
+    return Response({"detail": "Password reset successfully. You can now sign in."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def forgot_password(request):
+    """
+    Direct password reset by verifying email, new password, and confirmation password.
+    """
+    serializer = ForgotPasswordSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    email = serializer.validated_data["email"].strip()
+    new_password = serializer.validated_data["new_password"]
+
+    users = User.objects.filter(email__iexact=email, is_active=True)
+    if not users.exists():
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {"detail": "This user account is disabled."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return Response(
+            {"detail": "No account found with this email address."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    user = users.first()
+    try:
+        validate_password(new_password, user)
+    except ValidationError as exc:
+        return Response(
+            {"detail": " ".join(exc.messages), "errors": exc.messages},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    with transaction.atomic():
+        for u in users:
+            u.set_password(new_password)
+            u.save(update_fields=["password"])
+
+    return Response(
+        {
+            "message": "Password reset successfully. You can now sign in with your new password.",
+            "detail": "Password reset successfully.",
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["GET", "PUT"])
 @permission_classes([IsJWTAuthenticated])
 def user_profile(request):
@@ -338,6 +495,68 @@ def user_profile(request):
             "message": "Profile updated successfully",
             "user": UserSerializer(user).data,
         })
+
+
+@api_view(["GET"])
+@permission_classes([IsJWTSuperuser])
+def admin_user_list(request):
+    users = User.objects.select_related("profile").order_by("id")
+    return Response(UserAdminSerializer(users, many=True).data)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsJWTSuperuser])
+def admin_user_detail(request, user_id):
+    actor = get_authenticated_user(request)
+    user = get_object_or_404(User, pk=user_id)
+    serializer = UserAdminSerializer(user, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    changed_fields = serializer.validated_data
+    if user.pk == actor.pk and any(
+        changed_fields.get(field, getattr(user, field)) != getattr(user, field)
+        for field in ("is_active", "is_staff", "is_superuser")
+    ):
+        return Response(
+            {"detail": "You cannot change your own account access."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    removes_active_superuser = (
+        user.is_active
+        and user.is_superuser
+        and (
+            changed_fields.get("is_active", True) is False
+            or changed_fields.get("is_superuser", True) is False
+        )
+    )
+    if removes_active_superuser and not User.objects.filter(
+        is_active=True, is_superuser=True
+    ).exclude(pk=user.pk).exists():
+        return Response(
+            {"detail": "At least one active superuser must remain."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    serializer.save()
+    return Response(serializer.data)
+
+
+@api_view(["POST"])
+@permission_classes([IsJWTSuperuser])
+def admin_user_password_reset(request, user_id):
+    user = get_object_or_404(User, pk=user_id)
+    serializer = AdminPasswordResetSerializer(
+        data=request.data,
+        context={"user": user},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user.set_password(serializer.validated_data["new_password"])
+    user.save(update_fields=["password"])
+    return Response({"detail": f"Password updated for {user.username}."})
 
 
 # ---------------------------------------------------------------------------
