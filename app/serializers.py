@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
+from django.utils.text import slugify
 from rest_framework import serializers
 
 from app.models import (
@@ -25,6 +26,7 @@ from app.models import (
 # ---------------------------------------------------------------------------
 class CategorySerializer(serializers.ModelSerializer):
     products_count = serializers.IntegerField(source="products.count", read_only=True)
+    is_visible = serializers.BooleanField(source="is_active", required=False)
 
     class Meta:
         model = Category
@@ -34,9 +36,23 @@ class CategorySerializer(serializers.ModelSerializer):
             "slug",
             "description",
             "image_url",
+            "is_active",
+            "is_visible",
             "products_count",
             "created_at",
         ]
+
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, "copy") else dict(data)
+        if "is_visible" in data and "is_active" not in data:
+            data["is_active"] = data["is_visible"]
+        return super().to_internal_value(data)
+
+    def update(self, instance, validated_data):
+        if "name" in validated_data and validated_data["name"] != instance.name:
+            if not validated_data.get("slug"):
+                validated_data["slug"] = slugify(validated_data["name"])
+        return super().update(instance, validated_data)
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +60,7 @@ class CategorySerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
+    category_is_active = serializers.BooleanField(source="category.is_active", read_only=True, default=True)
     is_in_stock = serializers.BooleanField(read_only=True)
     discount_percentage = serializers.IntegerField(read_only=True)
     image_url = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -95,6 +112,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "id",
             "category",
             "category_name",
+            "category_is_active",
             "name",
             "slug",
             "description",

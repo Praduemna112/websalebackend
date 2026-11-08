@@ -489,3 +489,97 @@ class WebSaleAPITestCase(TestCase):
 
         response = self.client.post("/api/categories/", {"name": "Staff category"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_category_crud_and_visibility_filtering(self):
+        # Admin creates category
+        admin = User.objects.create_user(username="category_admin", password="AdminPassword123!", is_staff=True)
+        admin_token = create_jwt_token(admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {admin_token}")
+
+        # 1. Create category
+        create_res = self.client.post("/api/categories/", {
+            "name": "Books & Stationery",
+            "description": "Best books",
+            "is_active": True,
+        }, format="json")
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+        cat_id = create_res.data["id"]
+        self.assertTrue(create_res.data["is_active"])
+
+        # Create a product under this category
+        book_prod = Product.objects.create(
+            category_id=cat_id,
+            name="Django Guide",
+            slug="django-guide",
+            price=Decimal("49.99"),
+            stock=5,
+            is_active=True,
+        )
+
+        # 2. Edit category name and description
+        edit_res = self.client.patch(f"/api/categories/{cat_id}/", {
+            "name": "Books, Comics & Stationery",
+            "description": "Books and comics",
+        }, format="json")
+        self.assertEqual(edit_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(edit_res.data["name"], "Books, Comics & Stationery")
+        self.assertEqual(edit_res.data["description"], "Books and comics")
+
+        # Public customer sees the category and product
+        self.client.credentials()  # Clear auth (public user)
+        public_cats = self.client.get("/api/categories/")
+        cat_ids = [c["id"] for c in public_cats.data.get("results", public_cats.data)]
+        self.assertIn(cat_id, cat_ids)
+
+        public_prods = self.client.get("/api/products/")
+        prod_ids = [p["id"] for p in public_prods.data.get("results", public_prods.data)]
+        self.assertIn(book_prod.id, prod_ids)
+
+        # 3. Set category is_active=False (hide category)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {admin_token}")
+        hide_res = self.client.patch(f"/api/categories/{cat_id}/", {
+            "is_active": False,
+        }, format="json")
+        self.assertEqual(hide_res.status_code, status.HTTP_200_OK)
+        self.assertFalse(hide_res.data["is_active"])
+
+        # 4. Verify public customer no longer sees the category or its products
+        self.client.credentials()  # Clear auth (public user)
+        public_cats = self.client.get("/api/categories/")
+        cat_ids = [c["id"] for c in public_cats.data.get("results", public_cats.data)]
+        self.assertNotIn(cat_id, cat_ids)
+
+        public_prods = self.client.get("/api/products/")
+        prod_ids = [p["id"] for p in public_prods.data.get("results", public_prods.data)]
+        self.assertNotIn(book_prod.id, prod_ids)
+
+        # Direct product detail for inactive category returns 404 to public
+        detail_res = self.client.get(f"/api/products/{book_prod.id}/")
+        self.assertEqual(detail_res.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Public cannot add product of inactive category to cart
+        cart_res = self.client.post("/api/cart/add/", {
+            "product_id": book_prod.id,
+            "quantity": 1,
+        }, format="json")
+        self.assertEqual(cart_res.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Admin can still see inactive category and product
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {admin_token}")
+        admin_cats = self.client.get("/api/categories/")
+        admin_cat_ids = [c["id"] for c in admin_cats.data.get("results", admin_cats.data)]
+        self.assertIn(cat_id, admin_cat_ids)
+
+        admin_prods = self.client.get("/api/products/")
+        admin_prod_ids = [p["id"] for p in admin_prods.data.get("results", admin_prods.data)]
+        self.assertIn(book_prod.id, admin_prod_ids)
+
+        # 5. Delete category
+        del_res = self.client.delete(f"/api/categories/{cat_id}/")
+        self.assertEqual(del_res.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Category.objects.filter(id=cat_id).exists())
+
+        # Product still exists as uncategorized (on_delete=SET_NULL)
+        book_prod.refresh_from_db()
+        self.assertIsNone(book_prod.category)
+

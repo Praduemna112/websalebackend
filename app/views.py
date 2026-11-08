@@ -571,6 +571,20 @@ class CategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [ReadOnlyOrJWTAdmin]
     lookup_field = "id"
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = get_authenticated_user(self.request)
+        if not (user and user.is_staff):
+            qs = qs.filter(is_active=True)
+        else:
+            is_active_param = self.request.query_params.get("is_active")
+            if is_active_param is not None:
+                if is_active_param.lower() in ("true", "1"):
+                    qs = qs.filter(is_active=True)
+                elif is_active_param.lower() in ("false", "0"):
+                    qs = qs.filter(is_active=False)
+        return qs
+
 
 class ProductViewSet(viewsets.ModelViewSet):
     """
@@ -591,7 +605,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         user = get_authenticated_user(self.request)
         if not (user and user.is_staff):
-            qs = qs.filter(is_active=True)
+            qs = qs.filter(is_active=True).filter(
+                Q(category__isnull=True) | Q(category__is_active=True)
+            )
         params = self.request.query_params
 
         search = params.get("search")
@@ -671,7 +687,9 @@ def add_to_cart(request):
     session_id = serializer.validated_data.get("session_id")
 
     try:
-        product = Product.objects.get(id=product_id, is_active=True)
+        product = Product.objects.select_related("category").get(id=product_id, is_active=True)
+        if product.category and not product.category.is_active:
+            raise Product.DoesNotExist
     except Product.DoesNotExist:
         return Response({"detail": "Product not found or inactive"}, status=status.HTTP_404_NOT_FOUND)
 

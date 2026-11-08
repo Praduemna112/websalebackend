@@ -17,6 +17,7 @@ class Category(models.Model):
     slug = models.SlugField(max_length=120, unique=True, blank=True)
     description = models.TextField(blank=True, null=True)
     image_url = models.URLField(max_length=500, blank=True, null=True)
+    is_active = models.BooleanField(default=True, help_text="Visible for sale on store")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -24,6 +25,10 @@ class Category(models.Model):
         verbose_name = "Category"
         verbose_name_plural = "Categories"
         ordering = ["name"]
+
+    @property
+    def is_visible(self) -> bool:
+        return self.is_active
 
     def save(self, *args, **kwargs):
         if not self.slug:

@@ -15,7 +15,9 @@ from app.models import (
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "slug", "created_at")
+    list_display = ("id", "name", "slug", "is_active", "created_at")
+    list_filter = ("is_active", "created_at")
+    list_editable = ("is_active",)
     search_fields = ("name", "description")
     prepopulated_fields = {"slug": ("name",)}
 
