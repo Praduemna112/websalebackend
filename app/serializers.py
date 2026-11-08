@@ -60,10 +60,15 @@ class CategorySerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
-    category_is_active = serializers.BooleanField(source="category.is_active", read_only=True, default=True)
+    category_is_active = serializers.SerializerMethodField()
     is_in_stock = serializers.BooleanField(read_only=True)
     discount_percentage = serializers.IntegerField(read_only=True)
     image_url = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def get_category_is_active(self, obj):
+        if obj.category:
+            return getattr(obj.category, "is_active", True)
+        return True
 
     def validate_image_url(self, value):
         if value is None or value == "":

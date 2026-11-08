@@ -562,6 +562,21 @@ def admin_user_password_reset(request, user_id):
 # ---------------------------------------------------------------------------
 # 2. CATEGORY & PRODUCT VIEWSETS
 # ---------------------------------------------------------------------------
+def category_has_is_active_column() -> bool:
+    """Check if 'is_active' column exists in categories table to prevent OperationalError 1054."""
+    try:
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'categories' AND COLUMN_NAME = 'is_active'"
+            )
+            row = cursor.fetchone()
+            return bool(row and row[0] > 0)
+    except Exception:
+        return True
+
+
 class CategoryViewSet(viewsets.ModelViewSet):
     """
     API for managing Product Categories.
@@ -574,15 +589,16 @@ class CategoryViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         user = get_authenticated_user(self.request)
-        if not (user and user.is_staff):
-            qs = qs.filter(is_active=True)
-        else:
-            is_active_param = self.request.query_params.get("is_active")
-            if is_active_param is not None:
-                if is_active_param.lower() in ("true", "1"):
-                    qs = qs.filter(is_active=True)
-                elif is_active_param.lower() in ("false", "0"):
-                    qs = qs.filter(is_active=False)
+        if category_has_is_active_column():
+            if not (user and user.is_staff):
+                qs = qs.filter(is_active=True)
+            else:
+                is_active_param = self.request.query_params.get("is_active")
+                if is_active_param is not None:
+                    if is_active_param.lower() in ("true", "1"):
+                        qs = qs.filter(is_active=True)
+                    elif is_active_param.lower() in ("false", "0"):
+                        qs = qs.filter(is_active=False)
         return qs
 
 
@@ -605,9 +621,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         user = get_authenticated_user(self.request)
         if not (user and user.is_staff):
-            qs = qs.filter(is_active=True).filter(
-                Q(category__isnull=True) | Q(category__is_active=True)
-            )
+            qs = qs.filter(is_active=True)
+            if category_has_is_active_column():
+                qs = qs.filter(
+                    Q(category__isnull=True) | Q(category__is_active=True)
+                )
         params = self.request.query_params
 
         search = params.get("search")
@@ -688,7 +706,7 @@ def add_to_cart(request):
 
     try:
         product = Product.objects.select_related("category").get(id=product_id, is_active=True)
-        if product.category and not product.category.is_active:
+        if category_has_is_active_column() and product.category and not getattr(product.category, "is_active", True):
             raise Product.DoesNotExist
     except Product.DoesNotExist:
         return Response({"detail": "Product not found or inactive"}, status=status.HTTP_404_NOT_FOUND)
