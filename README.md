@@ -82,6 +82,18 @@ Copy-Item .env.example .env
 ```
 Edit `.env` with the MySQL database credentials for your local computer, keeping `DEBUG=True`, `ALLOWED_HOSTS=localhost,127.0.0.1`, and localhost CORS origins. Do not copy production credentials into this file.
 
+For Gmail order-status emails, put the SMTP settings in this actual `.env` file, not `.env.example`:
+```env
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=extrauserdata@gmail.com
+EMAIL_HOST_PASSWORD=your-google-app-password
+DEFAULT_FROM_EMAIL=extrauserdata@gmail.com
+```
+Replace `your-google-app-password` with a Google App Password. Keep `.env` private and restart Django after saving it. `.env.example` is only a placeholder template and must never contain a real password.
+
 For Spaceship, do not upload `.env`. Also omit `.env.example` from the deployment package; it contains placeholders only, but is just a local setup template. Set the production values in the Python application's environment settings instead: `DEBUG=False`, your private production `SECRET_KEY`, the Spaceship database details, `ALLOWED_HOSTS` for the backend domain, and `CORS_ALLOWED_ORIGINS` for the frontend domain. These settings are read from environment variables by `config/settings.py`, so the same source code works in both environments without edits. If you also use a local `.env` on the server, remove it; the production panel variables must be present.
 
 For the frontend, local development uses the `/api` development proxy to Django on `http://127.0.0.1:8000`. For production, set `REACT_APP_API_URL` to the backend's HTTPS URL before running `npm run build`; this value is baked into the frontend build.

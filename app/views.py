@@ -18,6 +18,7 @@ from rest_framework.permissions import AllowAny, BasePermission, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
+from app.email_notifications import send_order_status_notification
 from app.models import (
     Cart,
     CartItem,
@@ -961,6 +962,7 @@ def cancel_order(request, order_identifier):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    previous_status = order.status
     with transaction.atomic():
         # Restore stock if order was not yet cancelled
         if order.status != Order.Status.CANCELLED:
@@ -976,9 +978,11 @@ def cancel_order(request, order_identifier):
             order.delivery.status = Delivery.Status.CANCELLED
             order.delivery.save(update_fields=["status"])
 
+    email_notification = send_order_status_notification(order, previous_status)
     return Response({
         "message": f"Order {order.order_number} cancelled successfully",
         "order": OrderSerializer(order).data,
+        "email_notification": email_notification,
     })
 
 
@@ -998,6 +1002,7 @@ def update_order_status(request, order_identifier):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     new_status = serializer.validated_data["status"]
+    previous_status = order.status
     with transaction.atomic():
         if new_status == Order.Status.CANCELLED and order.status != Order.Status.CANCELLED:
             if order.status in [Order.Status.SHIPPED, Order.Status.DELIVERED]:
@@ -1016,7 +1021,29 @@ def update_order_status(request, order_identifier):
         order.status = new_status
         order.save(update_fields=["status", "updated_at"])
 
-    return Response({"order": OrderSerializer(order).data})
+    email_notification = send_order_status_notification(order, previous_status)
+    return Response({
+        "order": OrderSerializer(order).data,
+        "email_notification": email_notification,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsJWTAdminUser])
+def resend_order_status_email(request, order_identifier):
+    if order_identifier.isdigit():
+        order = Order.objects.filter(id=int(order_identifier)).first()
+    else:
+        order = Order.objects.filter(order_number=order_identifier).first()
+
+    if not order:
+        return Response({"detail": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    email_notification = send_order_status_notification(order, force=True)
+    return Response({
+        "message": f"Status email requested for order {order.order_number}",
+        "email_notification": email_notification,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -1083,6 +1110,7 @@ def process_payment(request):
     new_status = request.data.get("payment_status", Payment.Status.COMPLETED)
     transaction_id = request.data.get("transaction_id")
 
+    previous_order_status = order.status
     with transaction.atomic():
         payment.payment_status = new_status
         if transaction_id:
@@ -1096,10 +1124,12 @@ def process_payment(request):
             order.save(update_fields=["status"])
         payment.save()
 
+    email_notification = send_order_status_notification(order, previous_order_status)
     return Response({
         "message": f"Payment status updated to '{new_status}'",
         "payment": PaymentSerializer(payment).data,
         "order_status": order.status,
+        "email_notification": email_notification,
     })
 
 
@@ -1188,6 +1218,7 @@ def update_delivery_status(request, delivery_id):
     location = serializer.validated_data.get("current_location")
     notes = serializer.validated_data.get("status_notes")
 
+    previous_order_status = delivery.order.status
     with transaction.atomic():
         delivery.status = new_status
         if location:
@@ -1206,7 +1237,12 @@ def update_delivery_status(request, delivery_id):
 
         delivery.save()
 
+    email_notification = send_order_status_notification(
+        delivery.order,
+        previous_order_status,
+    )
     return Response({
         "message": f"Delivery updated to '{new_status}'",
         "delivery": DeliverySerializer(delivery).data,
+        "email_notification": email_notification,
     })

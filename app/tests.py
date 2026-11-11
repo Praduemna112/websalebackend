@@ -18,6 +18,7 @@ from app.models import (
     Product,
 )
 from app.views import create_jwt_token
+from app.email_notifications import send_order_status_notification
 
 
 class WebSaleAPITestCase(TestCase):
@@ -490,6 +491,158 @@ class WebSaleAPITestCase(TestCase):
         response = self.client.post("/api/categories/", {"name": "Staff category"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="extrauserdata@gmail.com",
+        EMAIL_HOST_USER="extrauserdata@gmail.com",
+        EMAIL_HOST_PASSWORD="test-app-password",
+    )
+    def test_order_status_milestones_email_customer_without_duplicates(self):
+        order = Order.objects.create(
+            total_amount=Decimal("10.00"),
+            shipping_name="Mail Customer",
+            shipping_email="customer@example.com",
+            shipping_phone="9999999999",
+            shipping_address="1 Main Street",
+            shipping_city="Mumbai",
+            shipping_state="Maharashtra",
+            shipping_postal_code="400001",
+        )
+        Payment.objects.create(order=order, amount=order.total_amount)
+        delivery = Delivery.objects.create(
+            order=order,
+            delivery_address="1 Main Street, Mumbai",
+        )
+        admin = User.objects.create_user(username="email-manager", is_staff=True)
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {create_jwt_token(admin)}",
+        )
+
+        confirmed = self.client.post(
+            "/api/payments/process/",
+            {"order_number": order.order_number, "payment_status": "COMPLETED"},
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        self.assertEqual(confirmed.data["email_notification"], "sent")
+
+        repeated_confirmation = self.client.post(
+            "/api/payments/process/",
+            {"order_number": order.order_number, "payment_status": "COMPLETED"},
+            format="json",
+        )
+        self.assertEqual(repeated_confirmation.data["email_notification"], "not_needed")
+
+        processing = self.client.patch(
+            f"/api/orders/{order.order_number}/status/",
+            {"status": "PROCESSING"},
+            format="json",
+        )
+        self.assertEqual(processing.data["email_notification"], "sent")
+
+        shipped = self.client.patch(
+            f"/api/deliveries/{delivery.id}/update-status/",
+            {"status": "IN_TRANSIT"},
+            format="json",
+        )
+        self.assertEqual(shipped.data["email_notification"], "sent")
+
+        delivered = self.client.patch(
+            f"/api/deliveries/{delivery.id}/update-status/",
+            {"status": "DELIVERED"},
+            format="json",
+        )
+        self.assertEqual(delivered.data["email_notification"], "sent")
+
+        self.assertEqual(len(mail.outbox), 4)
+        for message in mail.outbox:
+            self.assertEqual(message.from_email, "extrauserdata@gmail.com")
+            self.assertEqual(message.to, ["customer@example.com"])
+            self.assertIn(order.order_number, message.subject)
+        self.assertIn("Confirmed", mail.outbox[0].subject)
+        self.assertIn("Processing", mail.outbox[1].subject)
+        self.assertIn("Shipped", mail.outbox[2].subject)
+        self.assertIn("Delivered", mail.outbox[3].subject)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
+        EMAIL_HOST_USER="extrauserdata@gmail.com",
+        EMAIL_HOST_PASSWORD="",
+    )
+    def test_console_backend_does_not_claim_customer_email_was_sent(self):
+        order = Order.objects.create(
+            total_amount=Decimal("10.00"),
+            shipping_name="Mail Customer",
+            shipping_email="customer@example.com",
+            shipping_phone="9999999999",
+            shipping_address="1 Main Street",
+            shipping_city="Mumbai",
+            shipping_state="Maharashtra",
+            shipping_postal_code="400001",
+            status=Order.Status.CONFIRMED,
+        )
+
+        self.assertEqual(
+            send_order_status_notification(order, Order.Status.PENDING),
+            "logged",
+        )
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+        EMAIL_HOST_USER="extrauserdata@gmail.com",
+        EMAIL_HOST_PASSWORD="",
+    )
+    def test_missing_smtp_password_reports_email_not_configured(self):
+        order = Order.objects.create(
+            total_amount=Decimal("10.00"),
+            shipping_name="Mail Customer",
+            shipping_email="customer@example.com",
+            shipping_phone="9999999999",
+            shipping_address="1 Main Street",
+            shipping_city="Mumbai",
+            shipping_state="Maharashtra",
+            shipping_postal_code="400001",
+            status=Order.Status.CONFIRMED,
+        )
+
+        self.assertEqual(
+            send_order_status_notification(order, Order.Status.PENDING),
+            "not_configured",
+        )
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="extrauserdata@gmail.com",
+        EMAIL_HOST_USER="extrauserdata@gmail.com",
+        EMAIL_HOST_PASSWORD="test-app-password",
+    )
+    def test_staff_can_resend_current_order_status_email(self):
+        order = Order.objects.create(
+            total_amount=Decimal("10.00"),
+            shipping_name="Mail Customer",
+            shipping_email="customer@example.com",
+            shipping_phone="9999999999",
+            shipping_address="1 Main Street",
+            shipping_city="Mumbai",
+            shipping_state="Maharashtra",
+            shipping_postal_code="400001",
+            status=Order.Status.CONFIRMED,
+        )
+        admin = User.objects.create_user(username="resend-manager", is_staff=True)
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {create_jwt_token(admin)}",
+        )
+
+        response = self.client.post(
+            f"/api/orders/{order.order_number}/resend-status-email/",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["email_notification"], "sent")
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["customer@example.com"])
+        self.assertIn("Confirmed", mail.outbox[0].subject)
+
     def test_category_crud_and_visibility_filtering(self):
         # Admin creates category
         admin = User.objects.create_user(username="category_admin", password="AdminPassword123!", is_staff=True)
@@ -582,4 +735,3 @@ class WebSaleAPITestCase(TestCase):
         # Product still exists as uncategorized (on_delete=SET_NULL)
         book_prod.refresh_from_db()
         self.assertIsNone(book_prod.category)
-

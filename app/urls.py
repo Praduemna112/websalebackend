@@ -22,6 +22,7 @@ from app.views import (
     order_detail,
     process_payment,
     register_user,
+    resend_order_status_email,
     track_delivery,
     update_order_status,
     update_delivery_status,
@@ -55,6 +56,7 @@ base_api_patterns = [
     # Orders (Taking Orders)
     path("orders/", list_orders, name="list_orders"),
     path("orders/create/", create_order, name="create_order"),
+    path("orders/<str:order_identifier>/resend-status-email/", resend_order_status_email, name="resend_order_status_email"),
     path("orders/<str:order_identifier>/", order_detail, name="order_detail"),
     path("orders/<str:order_identifier>/cancel/", cancel_order, name="cancel_order"),
     path("orders/<str:order_identifier>/status/", update_order_status, name="update_order_status"),
