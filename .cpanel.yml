@@ -1,0 +1,8 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/vhzafsazwu/jiovendor.com/Backend/websalebackend
+    - /bin/cp -R . $DEPLOYPATH
+    - cd $DEPLOYPATH
+    - source /home/vhzafsazwu/virtualenv/jiovendor.com/Backend/websalebackend/3.x/bin/activate && pip install -r requirements.txt
+    - source /home/vhzafsazwu/virtualenv/jiovendor.com/Backend/websalebackend/3.x/bin/activate && python manage.py migrate
