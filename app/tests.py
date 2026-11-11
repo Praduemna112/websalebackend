@@ -554,15 +554,20 @@ class WebSaleAPITestCase(TestCase):
         )
         self.assertEqual(delivered.data["email_notification"], "sent")
 
-        self.assertEqual(len(mail.outbox), 4)
-        for message in mail.outbox:
+        customer_emails = [m for m in mail.outbox if "customer@example.com" in m.to]
+        admin_emails = [m for m in mail.outbox if "extrauserdata@gmail.com" in m.to]
+        self.assertEqual(len(customer_emails), 4)
+        self.assertEqual(len(admin_emails), 4)
+        for message in customer_emails:
             self.assertEqual(message.from_email, "extrauserdata@gmail.com")
-            self.assertEqual(message.to, ["customer@example.com"])
             self.assertIn(order.order_number, message.subject)
-        self.assertIn("Confirmed", mail.outbox[0].subject)
-        self.assertIn("Processing", mail.outbox[1].subject)
-        self.assertIn("Shipped", mail.outbox[2].subject)
-        self.assertIn("Delivered", mail.outbox[3].subject)
+        for message in admin_emails:
+            self.assertIn("Admin Alert", message.subject)
+            self.assertIn(order.order_number, message.subject)
+        self.assertIn("Confirmed", customer_emails[0].subject)
+        self.assertIn("Processing", customer_emails[1].subject)
+        self.assertIn("Shipped", customer_emails[2].subject)
+        self.assertIn("Delivered", customer_emails[3].subject)
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend",
@@ -639,9 +644,62 @@ class WebSaleAPITestCase(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["email_notification"], "sent")
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(mail.outbox[0].to, ["customer@example.com"])
-        self.assertIn("Confirmed", mail.outbox[0].subject)
+        # 1 sent to customer, 1 sent to admin
+        self.assertEqual(len(mail.outbox), 2)
+        customer_mail = [m for m in mail.outbox if "customer@example.com" in m.to][0]
+        admin_mail = [m for m in mail.outbox if "extrauserdata@gmail.com" in m.to][0]
+        self.assertIn("Confirmed", customer_mail.subject)
+        self.assertIn("Admin Alert", admin_mail.subject)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        DEFAULT_FROM_EMAIL="extrauserdata@gmail.com",
+        EMAIL_HOST_USER="extrauserdata@gmail.com",
+        EMAIL_HOST_PASSWORD="test-app-password",
+        ADMIN_EMAIL="extrauserdata@gmail.com",
+    )
+    def test_new_order_creation_sends_notification_to_admin_and_customer_with_items_and_payment(self):
+        session_id = "test-session-email-notif"
+        self.client.post(
+            "/api/cart/add/",
+            {"product_id": self.product.id, "quantity": 2, "session_id": session_id},
+            format="json",
+        )
+
+        mail.outbox = []
+        order_payload = {
+            "session_id": session_id,
+            "shipping_name": "John Buyer",
+            "shipping_email": "buyer@example.com",
+            "shipping_phone": "+91 9876543210",
+            "shipping_address": "Flat 101, Solapur",
+            "shipping_city": "Solapur",
+            "shipping_state": "Maharashtra",
+            "shipping_postal_code": "413001",
+            "shipping_country": "India",
+            "payment_method": "COD",
+        }
+        response = self.client.post("/api/orders/create/", order_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["email_notification"], "sent")
+
+        # Two emails must be sent: 1 to Admin, 1 to Customer
+        self.assertEqual(len(mail.outbox), 2)
+        admin_mail = mail.outbox[0]
+        customer_mail = mail.outbox[1]
+
+        self.assertEqual(admin_mail.to, ["extrauserdata@gmail.com"])
+        self.assertIn("Admin Alert", admin_mail.subject)
+        self.assertIn("Test Headphones", admin_mail.body)
+        self.assertIn("Qty: 2", admin_mail.body)
+        self.assertIn("199.98", admin_mail.body)
+        self.assertIn("John Buyer", admin_mail.body)
+
+        self.assertEqual(customer_mail.to, ["buyer@example.com"])
+        self.assertIn("Order Confirmation", customer_mail.subject)
+        self.assertIn("Test Headphones", customer_mail.body)
+        self.assertIn("Qty: 2", customer_mail.body)
+        self.assertIn("199.98", customer_mail.body)
 
     def test_category_crud_and_visibility_filtering(self):
         # Admin creates category

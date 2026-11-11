@@ -20,6 +20,15 @@ for path in HOSTING_PATHS:
 # Point to Django settings module
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
+# Ensure .env is loaded in production Passenger WSGI if present
+env_file = os.path.join(CURRENT_DIR, ".env")
+if os.path.exists(env_file):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_file)
+    except ImportError:
+        pass
+
 from django.core.wsgi import get_wsgi_application
 
 application = get_wsgi_application()

@@ -5,8 +5,8 @@ from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-if os.getenv("DEBUG") is None:
-    load_dotenv(BASE_DIR / ".env")
+# Always load .env if present (does not override variables already set in process environment)
+load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
 
@@ -131,9 +131,14 @@ EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in ("true", "1", "yes")
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "extrauserdata@gmail.com")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+_raw_email_password = os.getenv("EMAIL_HOST_PASSWORD", "").strip()
+if len(_raw_email_password.replace(" ", "")) == 16 and " " in _raw_email_password:
+    EMAIL_HOST_PASSWORD = _raw_email_password.replace(" ", "")
+else:
+    EMAIL_HOST_PASSWORD = _raw_email_password
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", os.getenv("ADMIN_ORDER_NOTIFICATION_EMAIL", EMAIL_HOST_USER))
 
 # CORS settings for the React frontend
 CORS_ALLOW_CREDENTIALS = True

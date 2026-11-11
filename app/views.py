@@ -18,7 +18,10 @@ from rest_framework.permissions import AllowAny, BasePermission, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
-from app.email_notifications import send_order_status_notification
+from app.email_notifications import (
+    send_new_order_notifications,
+    send_order_status_notification,
+)
 from app.models import (
     Cart,
     CartItem,
@@ -889,10 +892,13 @@ def create_order(request):
         # Step 7: Clear user cart
         cart.items.all().delete()
 
+    email_notification = send_new_order_notifications(order)
+
     return Response(
         {
             "message": "Order placed successfully!",
             "order": OrderSerializer(order).data,
+            "email_notification": email_notification,
         },
         status=status.HTTP_201_CREATED,
     )
