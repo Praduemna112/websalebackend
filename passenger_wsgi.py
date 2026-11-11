@@ -31,4 +31,19 @@ if os.path.exists(env_file):
 
 from django.core.wsgi import get_wsgi_application
 
-application = get_wsgi_application()
+_application = get_wsgi_application()
+
+def application(environ, start_response):
+    # Ensure all production requests on jiovendor.com use HTTPS scheme
+    # so all API URLs, pagination, and serializer links start with https://
+    if (
+        environ.get("HTTPS") == "on"
+        or environ.get("HTTP_X_FORWARDED_SSL") == "on"
+        or environ.get("HTTP_X_FORWARDED_PROTO") == "https"
+        or environ.get("SERVER_PORT") == "443"
+        or not os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
+    ):
+        environ["wsgi.url_scheme"] = "https"
+        environ["HTTP_X_FORWARDED_PROTO"] = "https"
+
+    return _application(environ, start_response)

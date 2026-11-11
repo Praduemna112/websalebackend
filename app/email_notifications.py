@@ -54,8 +54,10 @@ def format_order_items_html(order):
         subtotal = f"₹{item.subtotal}" if item.subtotal is not None else "—"
         img_html = ""
         if hasattr(item, "product") and item.product and getattr(item.product, "image_url", None):
-            url = item.product.image_url
-            if url.startswith("http") or url.startswith("data:image"):
+            url = item.product.image_url or ""
+            # Only use regular http/https URLs in email. Webmail clients (especially Gmail)
+            # block base64 data: URIs and break the table layout / clip the email.
+            if url.startswith("http://") or url.startswith("https://"):
                 img_html = f"<img src='{url}' alt='' style='width: 36px; height: 36px; object-fit: cover; border-radius: 4px; vertical-align: middle; margin-right: 8px;' />"
         rows.append(f"""
           <tr style='border-bottom: 1px solid #e2e8f0;'>

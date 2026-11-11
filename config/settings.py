@@ -25,7 +25,7 @@ def env_list(name, default=""):
 
 ALLOWED_HOSTS = env_list(
     "ALLOWED_HOSTS",
-    "localhost,127.0.0.1" if DEBUG else "",
+    "localhost,127.0.0.1,jiovendor.com,www.jiovendor.com" if DEBUG else "jiovendor.com,www.jiovendor.com",
 )
 if not DEBUG and not ALLOWED_HOSTS:
     raise ImproperlyConfigured("Set ALLOWED_HOSTS to your backend domain.")
@@ -145,7 +145,14 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:3000,http://localhost:5173,"
-    "http://127.0.0.1:3000,http://127.0.0.1:5173",
+    "http://127.0.0.1:3000,http://127.0.0.1:5173,"
+    "https://jiovendor.com,https://www.jiovendor.com",
+)
+
+CSRF_TRUSTED_ORIGINS = env_list(
+    "CSRF_TRUSTED_ORIGINS",
+    "https://jiovendor.com,https://www.jiovendor.com,"
+    "http://localhost:3000,http://127.0.0.1:3000",
 )
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
