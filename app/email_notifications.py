@@ -17,15 +17,17 @@ NOTIFIABLE_ORDER_STATUSES = {
 }
 
 
-def _send_email_with_html(subject, text_body, html_body, recipient):
+def _send_email_with_html(subject, text_body, html_body, recipient, reply_to=None):
     """
     Sends an email with both plain text and rich HTML alternatives.
+    Supports setting reply_to for customer no-reply or admin direct reply.
     """
     msg = EmailMultiAlternatives(
         subject=subject,
         body=text_body,
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[recipient],
+        reply_to=reply_to,
     )
     if html_body:
         msg.attach_alternative(html_body, "text/html")
@@ -229,6 +231,7 @@ def send_new_order_notifications(order):
         return "not_configured"
 
     admin_email = getattr(settings, "ADMIN_EMAIL", settings.DEFAULT_FROM_EMAIL)
+    noreply_email = getattr(settings, "NOREPLY_EMAIL", "noreply@jiovendor.com")
     items_text = format_order_items_text(order)
     payment_text = format_payment_details_text(order)
     shipping_text = format_shipping_details_text(order)
@@ -312,7 +315,9 @@ def send_new_order_notifications(order):
         f"==================================================\n"
         f"{payment_text}\n\n"
         f"We will notify you via email as your order is confirmed, processed, and shipped.\n\n"
-        f"Thank you for choosing WebSale!\n"
+        f"Thank you for choosing WebSale!\n\n"
+        f"---\n"
+        f"Note: This is an automated notification from a no-reply email ({noreply_email}). Please do not reply directly to this message.\n"
     )
 
     customer_html = f"""
@@ -343,9 +348,10 @@ def send_new_order_notifications(order):
           </h3>
           {payment_html}
 
-          <div style="margin-top: 24px; padding: 14px; background-color: #f8fafc; border-radius: 6px; text-align: center; font-size: 13px; color: #64748b;">
-            We will email you once your order is processed and shipped.<br />
-            Thank you for shopping with <strong>WebSale</strong>!
+          <div style="margin-top: 24px; padding: 14px; background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
+            <p style="margin: 0; font-weight: bold; color: #475569;">This is an automated no-reply email notification.</p>
+            <p style="margin: 4px 0 0 0;">Please do not reply directly to this email (<a href="mailto:{noreply_email}" style="color: #64748b; text-decoration: none;"><strong>{noreply_email}</strong></a>).</p>
+            <p style="margin: 6px 0 0 0;">Thank you for shopping with <strong>WebSale</strong>!</p>
           </div>
         </div>
       </div>
@@ -354,8 +360,12 @@ def send_new_order_notifications(order):
     """
 
     try:
-        sent_admin = _send_email_with_html(admin_subject, admin_text, admin_html, admin_email)
-        sent_customer = _send_email_with_html(customer_subject, customer_text, customer_html, order.shipping_email)
+        sent_admin = _send_email_with_html(
+            admin_subject, admin_text, admin_html, admin_email, reply_to=[order.shipping_email]
+        )
+        sent_customer = _send_email_with_html(
+            customer_subject, customer_text, customer_html, order.shipping_email, reply_to=[noreply_email]
+        )
         return "sent" if (sent_admin or sent_customer) else "failed"
     except (OSError, smtplib.SMTPException):
         logger.exception(
@@ -389,6 +399,7 @@ def send_order_status_notification(order, previous_status=None, force=False):
     items_text = format_order_items_text(order)
     payment_text = format_payment_details_text(order)
     shipping_text = format_shipping_details_text(order)
+    noreply_email = getattr(settings, "NOREPLY_EMAIL", "noreply@jiovendor.com")
 
     items_html = format_order_items_html(order)
     payment_html = format_payment_details_html(order)
@@ -425,7 +436,9 @@ def send_order_status_notification(order, previous_status=None, force=False):
         f"==================================================\n"
         f"{payment_text}\n\n"
         f"{delivery_info}"
-        f"Thank you for shopping with WebSale."
+        f"Thank you for shopping with WebSale.\n\n"
+        f"---\n"
+        f"Note: This is an automated notification from a no-reply email ({noreply_email}). Please do not reply directly to this message.\n"
     )
 
     customer_html = f"""
@@ -458,8 +471,10 @@ def send_order_status_notification(order, previous_status=None, force=False):
 
           {delivery_html}
 
-          <div style="margin-top: 24px; padding: 14px; background-color: #f8fafc; border-radius: 6px; text-align: center; font-size: 13px; color: #64748b;">
-            Thank you for shopping with <strong>WebSale</strong>!
+          <div style="margin-top: 24px; padding: 14px; background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
+            <p style="margin: 0; font-weight: bold; color: #475569;">This is an automated no-reply email notification.</p>
+            <p style="margin: 4px 0 0 0;">Please do not reply directly to this email (<a href="mailto:{noreply_email}" style="color: #64748b; text-decoration: none;"><strong>{noreply_email}</strong></a>).</p>
+            <p style="margin: 6px 0 0 0;">Thank you for shopping with <strong>WebSale</strong>!</p>
           </div>
         </div>
       </div>
@@ -473,6 +488,7 @@ def send_order_status_notification(order, previous_status=None, force=False):
             customer_text,
             customer_html,
             order.shipping_email,
+            reply_to=[noreply_email],
         )
 
         # Also send detailed alert to Admin so admin knows all updated details
@@ -536,6 +552,7 @@ def send_order_status_notification(order, previous_status=None, force=False):
                     admin_text,
                     admin_html,
                     admin_email,
+                    reply_to=[order.shipping_email],
                 )
             except Exception:
                 logger.exception("Could not send status copy to admin %s", admin_email)

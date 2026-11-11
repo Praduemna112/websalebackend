@@ -138,6 +138,7 @@ else:
     EMAIL_HOST_PASSWORD = _raw_email_password
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+NOREPLY_EMAIL = os.getenv("NOREPLY_EMAIL", os.getenv("NO_REPLY_EMAIL", "noreply@jiovendor.com"))
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", os.getenv("ADMIN_ORDER_NOTIFICATION_EMAIL", EMAIL_HOST_USER))
 
 # CORS settings for the React frontend
